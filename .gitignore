@@ -16,6 +16,7 @@ local.properties
 
 # 构建产物
 *.apk
+!releases/*.apk
 *.ap_
 *.aab
 
