@@ -1,0 +1,35 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# 构建产物
+*.apk
+*.ap_
+*.aab
+
+# IDE
+/.idea/
+*.swp
+*~
+
+# SVG 设计文件（保留在项目中用于文档）
+# icon-*.svg 文件保留
+
+# macOS
+.DS_Store
+
+# Claude Code 工作文件
+.claude/
+.codex/

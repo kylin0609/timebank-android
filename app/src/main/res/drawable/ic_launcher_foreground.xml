@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 沙漏设计 - 居中放置 -->
+    <group
+        android:translateX="54"
+        android:translateY="54">
+
+        <!-- 上部容器 -->
+        <path
+            android:pathData="M -12,-20 L 12,-20 L 8,-10 L -8,-10 Z"
+            android:fillColor="#FFFFFF"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="1.5"/>
+
+        <!-- 下部容器 -->
+        <path
+            android:pathData="M -12,20 L 12,20 L 8,10 L -8,10 Z"
+            android:fillColor="#FFFFFF"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="1.5"/>
+
+        <!-- 上部沙子（较少）-->
+        <path
+            android:pathData="M -6,-18 L 6,-18 L 5,-12 L -5,-12 Z">
+            <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+                <gradient
+                    android:startX="-6"
+                    android:startY="-18"
+                    android:endX="6"
+                    android:endY="-12"
+                    android:type="linear">
+                    <item android:offset="0" android:color="#FFFFD700"/>
+                    <item android:offset="1" android:color="#FFFFED4E"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- 下部沙子（较多）-->
+        <path
+            android:pathData="M -10,18 L 10,18 L 7,11 L -7,11 Z">
+            <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+                <gradient
+                    android:startX="-10"
+                    android:startY="18"
+                    android:endX="10"
+                    android:endY="11"
+                    android:type="linear">
+                    <item android:offset="0" android:color="#FFFFD700"/>
+                    <item android:offset="1" android:color="#FFFFED4E"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- 中间流动的沙子 -->
+        <path
+            android:pathData="M -1,-10 L 1,-10 L 1,10 L -1,10 Z"
+            android:fillColor="#FFFFED4E"/>
+
+        <!-- 沙漏边框 -->
+        <path
+            android:pathData="M -12,-20 L -8,-10 L -8,10 L -12,20 M 12,-20 L 8,-10 L 8,10 L 12,20"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2"
+            android:fillColor="#00000000"/>
+
+        <!-- 顶部和底部横线 -->
+        <path
+            android:pathData="M -14,-20 L 14,-20 M -14,20 L 14,20"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"/>
+
+    </group>
+
+</vector>
