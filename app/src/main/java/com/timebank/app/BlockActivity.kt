@@ -38,7 +38,12 @@ class BlockActivity : ComponentActivity() {
             TimeBankTheme {
                 BlockScreen(
                     appName = appName,
-                    onClose = { finish() }
+                    onClose = {
+                        // 返回桌面（将任务移到后台）
+                        moveTaskToBack(true)
+                        // 关闭当前Activity
+                        finish()
+                    }
                 )
             }
         }

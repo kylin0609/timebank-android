@@ -44,10 +44,14 @@ class MonitorService : Service() {
     private var lastApp: String? = null
     private var lastCheckTime: Long = 0
 
+    // 防重复弹窗标志：记录上次显示拦截界面的时间
+    private var lastBlockTime: Long = 0
+
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "timebank_monitor"
         private const val CHECK_INTERVAL = 100L // 每0.1秒检查一次（100毫秒）
+        private const val BLOCK_COOLDOWN = 3000L // 拦截界面冷却时间：3秒内不重复弹窗
     }
 
     override fun onCreate() {
@@ -199,8 +203,16 @@ class MonitorService : Service() {
                     android.util.Log.d("MonitorService", "负向应用，当前余额: $currentBalance")
 
                     if (currentBalance <= 0) {
+                        // 检查是否在冷却期内，避免重复弹窗
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
+                            android.util.Log.d("MonitorService", "拦截界面冷却期内，跳过弹窗")
+                            return
+                        }
+
                         android.util.Log.d("MonitorService", "余额不足，立即拦截负向应用: ${classification.appName}")
                         launchBlockActivity(classification.appName, currentApp)
+                        lastBlockTime = currentTime
                         // 不更新lastApp和lastCheckTime，下次检查时仍会认为是新应用并再次拦截
                         return
                     }
@@ -247,9 +259,19 @@ class MonitorService : Service() {
                     val cost = duration
 
                     if (currentBalance <= 0) {
+                        // 检查是否在冷却期内，避免重复弹窗
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
+                            android.util.Log.d("MonitorService", "拦截界面冷却期内，跳过弹窗")
+                            // 重置lastCheckTime，避免重复计算
+                            lastCheckTime = System.currentTimeMillis()
+                            return
+                        }
+
                         // 余额不足或为0，立即拦截
                         android.util.Log.d("MonitorService", "余额不足(当前: ${currentBalance})，拦截负向应用: ${classification.appName}")
                         launchBlockActivity(classification.appName, packageName)
+                        lastBlockTime = currentTime
                         // 重置lastCheckTime，避免重复计算
                         lastCheckTime = System.currentTimeMillis()
                     } else {
@@ -260,9 +282,17 @@ class MonitorService : Service() {
                             android.util.Log.d("MonitorService", "负向应用 ${classification.appName} 使用 ${duration}秒，扣除 ${cost}秒")
                             updateNotification("使用负向应用，已扣除 ${cost}秒")
                         } else {
+                            // 检查是否在冷却期内，避免重复弹窗
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
+                                android.util.Log.d("MonitorService", "拦截界面冷却期内，跳过弹窗")
+                                return
+                            }
+
                             // 扣除失败（余额变为负），拦截
                             android.util.Log.d("MonitorService", "余额不足，拦截负向应用: ${classification.appName}")
                             launchBlockActivity(classification.appName, packageName)
+                            lastBlockTime = currentTime
                         }
                     }
                 }
