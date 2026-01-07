@@ -1,5 +1,6 @@
 package com.timebank.app.service
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.timebank.app.BlockActivity
 import com.timebank.app.MainActivity
@@ -46,6 +48,16 @@ class MonitorService : Service() {
 
     // 防重复弹窗标志：记录上次显示拦截界面的时间
     private var lastBlockTime: Long = 0
+
+    // 负向应用使用时长追踪（秒）
+    private var negativeAppUsageSeconds: Long = 0
+    private var lastNegativeApp: String? = null
+
+    // 负向应用上次提示时间（用于每分钟提示）
+    private var lastNegativeAppReminderTime: Long = 0
+
+    // 屏幕关闭标志
+    private var wasScreenOff = false
 
     companion object {
         private const val NOTIFICATION_ID = 1001
@@ -187,6 +199,31 @@ class MonitorService : Service() {
         val currentApp = usageStatsHelper.getForegroundApp()
         val currentTime = System.currentTimeMillis()
 
+        // 检测屏幕是否关闭（锁屏或黑屏）
+        val powerManager = getSystemService(PowerManager::class.java)
+        val isScreenOn = powerManager?.isInteractive ?: true
+        val keyguardManager = getSystemService(KeyguardManager::class.java)
+        val isLocked = keyguardManager?.isDeviceLocked ?: false
+
+        // 如果屏幕关闭或锁屏，不计算时间
+        if (!isScreenOn || isLocked) {
+            if (!wasScreenOff) {
+                android.util.Log.d("MonitorService", "检测到屏幕关闭/锁屏，暂停时间计算")
+                wasScreenOff = true
+            }
+            // 重置检查时间，避免恢复时计算累积时间
+            lastCheckTime = currentTime
+            return
+        }
+
+        // 从锁屏恢复
+        if (wasScreenOff) {
+            android.util.Log.d("MonitorService", "屏幕恢复，重新开始计算")
+            wasScreenOff = false
+            lastCheckTime = currentTime
+            return
+        }
+
         android.util.Log.d("MonitorService", "检查前台应用: $currentApp (上次: $lastApp)")
 
         if (currentApp != null && currentApp != packageName) {
@@ -202,9 +239,15 @@ class MonitorService : Service() {
                     val currentBalance = configRepository.getCurrentBalance().first()
                     android.util.Log.d("MonitorService", "负向应用，当前余额: $currentBalance")
 
+                    // 切换应用时重置负向应用计数
+                    if (currentApp != lastNegativeApp) {
+                        lastNegativeApp = currentApp
+                        negativeAppUsageSeconds = 0
+                        lastNegativeAppReminderTime = currentTime
+                    }
+
                     if (currentBalance <= 0) {
                         // 检查是否在冷却期内，避免重复弹窗
-                        val currentTime = System.currentTimeMillis()
                         if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
                             android.util.Log.d("MonitorService", "拦截界面冷却期内，跳过弹窗")
                             return
@@ -225,7 +268,7 @@ class MonitorService : Service() {
                 val duration = (currentTime - lastCheckTime) / 1000 // 秒
                 if (duration >= 1) { // 至少使用了1秒
                     android.util.Log.d("MonitorService", "同一应用 $currentApp 使用了 $duration 秒")
-                    handleAppUsage(currentApp, duration)
+                    handleAppUsage(currentApp, duration, currentTime)
                     lastCheckTime = currentTime
                 }
             }
@@ -235,7 +278,7 @@ class MonitorService : Service() {
     /**
      * 处理应用使用情况
      */
-    private suspend fun handleAppUsage(packageName: String, duration: Long) {
+    private suspend fun handleAppUsage(packageName: String, duration: Long, currentTime: Long) {
         // 获取应用分类
         val classification = appClassificationRepository.getAppByPackageName(packageName)
 
@@ -258,13 +301,28 @@ class MonitorService : Service() {
                     val currentBalance = configRepository.getCurrentBalance().first()
                     val cost = duration
 
+                    // 追踪负向应用使用时长
+                    if (packageName == lastNegativeApp) {
+                        negativeAppUsageSeconds += duration
+                        android.util.Log.d("MonitorService", "负向应用累计使用: ${negativeAppUsageSeconds}秒，距上次提示: ${currentTime - lastNegativeAppReminderTime}ms")
+
+                        // 每60秒（60000毫秒）显示一次气泡提醒
+                        if (currentTime - lastNegativeAppReminderTime >= 60000) {
+                            showBubbleReminder(currentBalance)
+                            lastNegativeAppReminderTime = currentTime
+                            android.util.Log.d("MonitorService", "已显示气泡提醒，下次提示时间: ${lastNegativeAppReminderTime + 60000}")
+                        }
+                    } else {
+                        // 切换到新的负向应用，重置计数器
+                        lastNegativeApp = packageName
+                        negativeAppUsageSeconds = duration
+                        lastNegativeAppReminderTime = currentTime
+                    }
+
                     if (currentBalance <= 0) {
                         // 检查是否在冷却期内，避免重复弹窗
-                        val currentTime = System.currentTimeMillis()
                         if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
                             android.util.Log.d("MonitorService", "拦截界面冷却期内，跳过弹窗")
-                            // 重置lastCheckTime，避免重复计算
-                            lastCheckTime = System.currentTimeMillis()
                             return
                         }
 
@@ -272,8 +330,10 @@ class MonitorService : Service() {
                         android.util.Log.d("MonitorService", "余额不足(当前: ${currentBalance})，拦截负向应用: ${classification.appName}")
                         launchBlockActivity(classification.appName, packageName)
                         lastBlockTime = currentTime
-                        // 重置lastCheckTime，避免重复计算
-                        lastCheckTime = System.currentTimeMillis()
+                        // 重置负向应用计数器
+                        negativeAppUsageSeconds = 0
+                        lastNegativeApp = null
+                        lastNegativeAppReminderTime = 0
                     } else {
                         // 尝试扣除余额
                         val success = configRepository.deductBalance(cost)
@@ -283,7 +343,6 @@ class MonitorService : Service() {
                             updateNotification("使用负向应用，已扣除 ${cost}秒")
                         } else {
                             // 检查是否在冷却期内，避免重复弹窗
-                            val currentTime = System.currentTimeMillis()
                             if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
                                 android.util.Log.d("MonitorService", "拦截界面冷却期内，跳过弹窗")
                                 return
@@ -293,6 +352,10 @@ class MonitorService : Service() {
                             android.util.Log.d("MonitorService", "余额不足，拦截负向应用: ${classification.appName}")
                             launchBlockActivity(classification.appName, packageName)
                             lastBlockTime = currentTime
+                            // 重置负向应用计数器
+                            negativeAppUsageSeconds = 0
+                            lastNegativeApp = null
+                            lastNegativeAppReminderTime = 0
                         }
                     }
                 }
@@ -317,6 +380,26 @@ class MonitorService : Service() {
 
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * 显示气泡提醒
+     * 每分钟在负向应用上显示剩余时间
+     */
+    private fun showBubbleReminder(remainingBalance: Long) {
+        val remainingMinutes = (remainingBalance / 60).toInt()
+        val remainingSeconds = (remainingBalance % 60).toInt()
+
+        android.util.Log.d("MonitorService", "显示气泡提醒: 剩余${remainingMinutes}分${remainingSeconds}秒")
+
+        val intent = Intent(this, com.timebank.app.BubbleReminderActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_NO_HISTORY or
+                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+            putExtra("remaining_minutes", remainingMinutes)
+            putExtra("remaining_seconds", remainingSeconds)
+        }
+        startActivity(intent)
     }
 
     /**

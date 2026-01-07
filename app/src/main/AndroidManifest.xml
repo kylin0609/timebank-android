@@ -23,6 +23,9 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- 检测锁屏状态 -->
+    <uses-permission android:name="android.permission.USE_UNLOCK_STATUS" />
+
     <application
         android:name=".TimeBankApp"
         android:allowBackup="true"
@@ -53,6 +56,17 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:theme="@style/Theme.MyApplication" />
+
+        <!-- 气泡提醒界面 -->
+        <activity
+            android:name=".BubbleReminderActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:taskAffinity="" />
 
         <!-- 应用监控服务 -->
         <service
