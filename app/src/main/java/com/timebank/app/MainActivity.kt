@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -157,10 +158,12 @@ fun HomeScreen(
         mutableStateOf(android.provider.Settings.canDrawOverlays(context))
     }
 
+    // 快速轮询检测权限变化，提供即时反馈
     LaunchedEffect(Unit) {
         while (true) {
-            kotlinx.coroutines.delay(1000)
+            kotlinx.coroutines.delay(200) // 0.2 秒轮询
             hasOverlayPermission = android.provider.Settings.canDrawOverlays(context)
+            viewModel.refreshPermission() // 同时刷新使用情况权限
         }
     }
 
@@ -214,34 +217,34 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.weight(2f))
 
-            // 权限提示 - 极简风格
+            // 权限提示 - 极简风格，始终显示所有权限状态
             if (!hasPermission || !hasOverlayPermission) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (!hasPermission) {
-                        PermissionChip(
-                            icon = "⚠️",
-                            text = "需要使用情况访问权限",
-                            onClick = onRequestPermission
-                        )
-                    }
+                    // 使用情况访问权限
+                    PermissionChip(
+                        icon = if (hasPermission) "✅" else "⚠️",
+                        text = if (hasPermission) "使用情况访问权限（已授予）" else "需要使用情况访问权限",
+                        isGranted = hasPermission,
+                        onClick = onRequestPermission
+                    )
 
-                    if (hasPermission && !hasOverlayPermission) {
-                        PermissionChip(
-                            icon = "⚠️",
-                            text = "需要悬浮窗权限",
-                            onClick = {
-                                val intent = android.content.Intent(
-                                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    android.net.Uri.parse("package:${context.packageName}")
-                                )
-                                context.startActivity(intent)
-                            }
-                        )
-                    }
+                    // 悬浮窗权限
+                    PermissionChip(
+                        icon = if (hasOverlayPermission) "✅" else "⚠️",
+                        text = if (hasOverlayPermission) "悬浮窗权限（已授予）" else "需要悬浮窗权限",
+                        isGranted = hasOverlayPermission,
+                        onClick = {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:${context.packageName}")
+                            )
+                            context.startActivity(intent)
+                        }
+                    )
                 }
             }
 
@@ -250,18 +253,23 @@ fun HomeScreen(
     }
 }
 
-// 极简权限提示芯片
+// 极简权限提示芯片（支持状态显示）
 @Composable
 fun PermissionChip(
     icon: String,
     text: String,
+    isGranted: Boolean,
     onClick: () -> Unit
 ) {
     Surface(
-        onClick = onClick,
+        onClick = if (!isGranted) onClick else {{}},
         modifier = Modifier.fillMaxWidth(0.9f),
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
+        color = if (isGranted) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+        } else {
+            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        },
         tonalElevation = 0.dp
     ) {
         Row(
@@ -276,15 +284,28 @@ fun PermissionChip(
             Text(
                 text = text,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer,
+                color = if (isGranted) {
+                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                } else {
+                    MaterialTheme.colorScheme.onErrorContainer
+                },
                 modifier = Modifier.weight(1f)
             )
-            Icon(
-                Icons.Default.ArrowForward,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.6f),
-                modifier = Modifier.size(20.dp)
-            )
+            if (!isGranted) {
+                Icon(
+                    Icons.Default.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.6f),
+                    modifier = Modifier.size(20.dp)
+                )
+            } else {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

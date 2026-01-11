@@ -87,13 +87,13 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 清除所有数据并重置为默认余额（5分钟）
+     * 清除所有数据并重置为默认余额（1分钟）
      * 每周只能执行一次
      */
     fun clearAllDataAndResetToDefault() {
         viewModelScope.launch {
-            // 重置余额为 5 分钟（300 秒）
-            configRepository.setCurrentBalance(300L)
+            // 重置余额为 1 分钟（60 秒）
+            configRepository.setCurrentBalance(60L)
             // 更新上次清除时间
             configRepository.setLastClearDate(System.currentTimeMillis())
         }

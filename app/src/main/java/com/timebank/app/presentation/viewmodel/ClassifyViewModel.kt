@@ -70,26 +70,57 @@ class ClassifyViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    // 图标加载进度 (当前/总数)
+    private val _loadingProgress = MutableStateFlow(0 to 0)
+    val loadingProgress: StateFlow<Pair<Int, Int>> = _loadingProgress.asStateFlow()
+
+    // 是否正在加载图标
+    private val _isLoadingIcons = MutableStateFlow(false)
+    val isLoadingIcons: StateFlow<Boolean> = _isLoadingIcons.asStateFlow()
+
     init {
         loadInstalledApps()
     }
 
     /**
-     * 加载已安装的应用列表
-     * 优化：先标记为加载中，加载完成后标记为完成
+     * 分阶段加载已安装的应用列表
+     * 第一阶段：快速加载基本信息（0.1秒内）
+     * 第二阶段：并行加载图标（1-2秒）
      */
-    private fun loadInstalledApps() {
+    fun loadInstalledApps() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             _isLoading.value = true
             try {
-                val apps = appInfoHelper.getInstalledUserApps()
-                android.util.Log.d("ClassifyViewModel", "已加载 ${apps.size} 个应用")
-                _installedApps.value = apps
+                // 第一阶段：快速加载基本信息（不含图标）
+                android.util.Log.d("ClassifyViewModel", "第一阶段：快速加载基本信息")
+                val basicApps = appInfoHelper.getInstalledUserAppsBasicInfo()
+                android.util.Log.d("ClassifyViewModel", "已加载 ${basicApps.size} 个应用（基本信息）")
+
+                // 立即更新列表，用户可以看到应用列表（默认图标）
+                _installedApps.value = basicApps
+                _isLoading.value = false
+
+                // 第二阶段：后台并行加载图标
+                if (basicApps.isNotEmpty()) {
+                    _isLoadingIcons.value = true
+                    _loadingProgress.value = 0 to basicApps.size
+
+                    android.util.Log.d("ClassifyViewModel", "第二阶段：并行加载图标")
+                    val appsWithIcons = appInfoHelper.loadIconsAsync(basicApps) { current, total ->
+                        // 实时更新进度
+                        _loadingProgress.value = current to total
+                    }
+
+                    // 图标加载完成，更新列表
+                    _installedApps.value = appsWithIcons
+                    _isLoadingIcons.value = false
+                    android.util.Log.d("ClassifyViewModel", "图标加载完成: ${appsWithIcons.size} 个应用")
+                }
             } catch (e: Exception) {
                 android.util.Log.e("ClassifyViewModel", "加载应用列表失败", e)
                 _installedApps.value = emptyList()
-            } finally {
                 _isLoading.value = false
+                _isLoadingIcons.value = false
             }
         }
     }

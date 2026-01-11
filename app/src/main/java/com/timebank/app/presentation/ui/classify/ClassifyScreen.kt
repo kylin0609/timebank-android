@@ -41,7 +41,36 @@ fun ClassifyScreen(
     val negativeApps by viewModel.negativeApps.collectAsState()
     val unclassifiedApps by viewModel.unclassifiedApps.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val isLoadingIcons by viewModel.isLoadingIcons.collectAsState()
+    val loadingProgress by viewModel.loadingProgress.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    // 监听权限变化，自动重新加载应用列表
+    LaunchedEffect(Unit) {
+        var lastPermissionState = false
+        while (true) {
+            kotlinx.coroutines.delay(1000) // 每秒检查一次权限
+            val hasPermission = try {
+                val usageStatsManager = context.getSystemService(android.content.Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+                val time = System.currentTimeMillis()
+                val stats = usageStatsManager.queryUsageStats(
+                    android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+                    time - 1000,
+                    time
+                )
+                stats.isNotEmpty()
+            } catch (e: Exception) {
+                false
+            }
+
+            // 如果权限从无到有，重新加载应用列表
+            if (!lastPermissionState && hasPermission) {
+                android.util.Log.d("ClassifyScreen", "检测到权限授予，重新加载应用列表")
+                viewModel.loadInstalledApps()
+            }
+            lastPermissionState = hasPermission
+        }
+    }
 
     var selectedFilter by remember { mutableStateOf(0) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -119,6 +148,8 @@ fun ClassifyScreen(
                 2 -> UnclassifiedAppGrid(
                     apps = unclassifiedApps,
                     isLoading = isLoading,
+                    isLoadingIcons = isLoadingIcons,
+                    loadingProgress = loadingProgress,
                     onAddToPositive = { app ->
                         viewModel.addAppToCategory(app.packageName, app.appName, AppCategory.POSITIVE)
                     },
@@ -156,7 +187,7 @@ fun ClassifyScreen(
     }
 }
 
-// 已分类应用 - 3列网格
+// 已分类应用 - 3列网格（优化：加载时也显示已有应用）
 @Composable
 fun ClassifiedAppGrid(
     apps: List<AppClassification>,
@@ -165,30 +196,27 @@ fun ClassifiedAppGrid(
     context: android.content.Context
 ) {
     when {
-        isLoading && apps.isEmpty() -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
         apps.isEmpty() -> {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "暂无应用\n点击右下角 + 添加",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
-                    textAlign = TextAlign.Center
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Text(
+                        text = "暂无应用\n点击右下角 + 添加",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
         else -> {
+            // 有应用时始终显示列表，不因加载状态阻塞
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
@@ -299,52 +327,96 @@ fun ClassifiedAppItem(
     }
 }
 
-// 未分类应用 - 3列网格
+// 未分类应用 - 3列网格（优化：显示加载进度）
 @Composable
 fun UnclassifiedAppGrid(
     apps: List<InstalledAppInfo>,
     isLoading: Boolean,
+    isLoadingIcons: Boolean,
+    loadingProgress: Pair<Int, Int>,
     onAddToPositive: (InstalledAppInfo) -> Unit,
     onAddToNegative: (InstalledAppInfo) -> Unit
 ) {
-    when {
-        isLoading && apps.isEmpty() -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary
-                )
+    Box(modifier = Modifier.fillMaxSize()) {
+        when {
+            isLoading && apps.isEmpty() -> {
+                // 首次加载基本信息
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "正在加载应用列表...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                        )
+                    }
+                }
             }
-        }
-        apps.isEmpty() -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "所有应用都已分类",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-        else -> {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(20.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp)
-            ) {
-                items(apps) { app ->
-                    UnclassifiedAppItem(
-                        app = app,
-                        onAddToPositive = { onAddToPositive(app) },
-                        onAddToNegative = { onAddToNegative(app) }
+            apps.isEmpty() -> {
+                // 所有应用已分类
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "所有应用都已分类",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
+                        textAlign = TextAlign.Center
                     )
+                }
+            }
+            else -> {
+                // 显示应用列表
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    // 加载图标进度提示（顶部固定）
+                    if (isLoadingIcons) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(3) }) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                                tonalElevation = 0.dp
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "正在加载图标... ${loadingProgress.first}/${loadingProgress.second}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    items(apps) { app ->
+                        UnclassifiedAppItem(
+                            app = app,
+                            onAddToPositive = { onAddToPositive(app) },
+                            onAddToNegative = { onAddToNegative(app) }
+                        )
+                    }
                 }
             }
         }

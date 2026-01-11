@@ -27,13 +27,22 @@ class HomeViewModel @Inject constructor(
         )
 
     // 权限状态
-    val hasPermission: StateFlow<Boolean> = flow {
-        emit(permissionManager.hasUsageStatsPermission())
-    }.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = false
-        )
+    private val _hasPermission = MutableStateFlow(false)
+    val hasPermission: StateFlow<Boolean> = _hasPermission.asStateFlow()
+
+    init {
+        // 初始检查权限
+        refreshPermission()
+    }
+
+    /**
+     * 刷新权限状态
+     */
+    fun refreshPermission() {
+        viewModelScope.launch {
+            _hasPermission.value = permissionManager.hasUsageStatsPermission()
+        }
+    }
 
     /**
      * 添加余额（用于测试）

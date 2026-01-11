@@ -61,9 +61,11 @@ class MonitorService : Service() {
 
     companion object {
         private const val NOTIFICATION_ID = 1001
+        private const val REMINDER_NOTIFICATION_ID = 1002  // 气泡提醒通知 ID
         private const val CHANNEL_ID = "timebank_monitor"
+        private const val REMINDER_CHANNEL_ID = "timebank_reminder"  // 气泡提醒通知渠道
         private const val CHECK_INTERVAL = 100L // 每0.1秒检查一次（100毫秒）
-        private const val BLOCK_COOLDOWN = 3000L // 拦截界面冷却时间：3秒内不重复弹窗
+        private const val BLOCK_COOLDOWN = 30000L // 拦截界面冷却时间：30秒内不重复弹窗
     }
 
     override fun onCreate() {
@@ -98,6 +100,9 @@ class MonitorService : Service() {
      */
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
+            // 前台服务通知渠道
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "时间银行监控服务",
@@ -106,9 +111,20 @@ class MonitorService : Service() {
                 description = "后台监控应用使用时长"
                 setShowBadge(false)
             }
-
-            val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)
+
+            // 气泡提醒通知渠道（高优先级，显示在顶部）
+            val reminderChannel = NotificationChannel(
+                REMINDER_CHANNEL_ID,
+                "使用时长提醒",
+                NotificationManager.IMPORTANCE_HIGH  // 高优先级，会显示横幅通知
+            ).apply {
+                description = "负向应用使用时长提醒"
+                setShowBadge(false)
+                enableVibration(false)  // 不震动
+                setSound(null, null)     // 不播放声音
+            }
+            notificationManager.createNotificationChannel(reminderChannel)
         }
     }
 
@@ -186,9 +202,9 @@ class MonitorService : Service() {
         // 如果上次重置时间是昨天或更早，执行重置
         if (lastResetDate < todayStart) {
             android.util.Log.d("MonitorService", "检测到新的一天，执行每日重置")
-            configRepository.setCurrentBalance(300L) // 重置为默认的 5 分钟 (300秒)
+            configRepository.setCurrentBalance(60L) // 重置为默认的 1 分钟 (60秒)
             configRepository.setLastResetDate(currentTime)
-            android.util.Log.d("MonitorService", "每日重置完成，余额重置为 300 秒")
+            android.util.Log.d("MonitorService", "每日重置完成，余额重置为 60 秒")
         }
     }
 
@@ -223,8 +239,6 @@ class MonitorService : Service() {
             lastCheckTime = currentTime
             return
         }
-
-        android.util.Log.d("MonitorService", "检查前台应用: $currentApp (上次: $lastApp)")
 
         if (currentApp != null && currentApp != packageName) {
             // 如果是新应用
@@ -306,11 +320,11 @@ class MonitorService : Service() {
                         negativeAppUsageSeconds += duration
                         android.util.Log.d("MonitorService", "负向应用累计使用: ${negativeAppUsageSeconds}秒，距上次提示: ${currentTime - lastNegativeAppReminderTime}ms")
 
-                        // 每60秒（60000毫秒）显示一次气泡提醒
-                        if (currentTime - lastNegativeAppReminderTime >= 60000) {
-                            showBubbleReminder(currentBalance)
+                        // 每5秒（5000毫秒）显示一次气泡提醒（测试用）
+                        if (currentTime - lastNegativeAppReminderTime >= 5000) {
+                            showBubbleReminder(negativeAppUsageSeconds)
                             lastNegativeAppReminderTime = currentTime
-                            android.util.Log.d("MonitorService", "已显示气泡提醒，下次提示时间: ${lastNegativeAppReminderTime + 60000}")
+                            android.util.Log.d("MonitorService", "已显示气泡提醒，累计使用: ${negativeAppUsageSeconds}秒")
                         }
                     } else {
                         // 切换到新的负向应用，重置计数器
@@ -384,22 +398,52 @@ class MonitorService : Service() {
 
     /**
      * 显示气泡提醒
-     * 每分钟在负向应用上显示剩余时间
+     * 每5秒在负向应用上显示已使用时间（测试用）
+     * 使用 Notification 实现，保证完全不阻挡触摸
      */
-    private fun showBubbleReminder(remainingBalance: Long) {
-        val remainingMinutes = (remainingBalance / 60).toInt()
-        val remainingSeconds = (remainingBalance % 60).toInt()
+    private fun showBubbleReminder(usedSeconds: Long) {
+        val usedMinutes = (usedSeconds / 60).toInt()
 
-        android.util.Log.d("MonitorService", "显示气泡提醒: 剩余${remainingMinutes}分${remainingSeconds}秒")
+        android.util.Log.d("MonitorService", "显示气泡提醒: 已连续使用 ${usedSeconds}秒 (${usedMinutes}分钟)")
 
-        val intent = Intent(this, com.timebank.app.BubbleReminderActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_NO_HISTORY or
-                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
-            putExtra("remaining_minutes", remainingMinutes)
-            putExtra("remaining_seconds", remainingSeconds)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            try {
+                val notificationManager = getSystemService(NotificationManager::class.java)
+
+                // 构建提醒消息
+                val message = if (usedSeconds < 60) {
+                    "已连续使用 ${usedSeconds}秒"
+                } else {
+                    "已连续使用 ${usedMinutes}分钟"
+                }
+
+                // 创建通知
+                val notification = NotificationCompat.Builder(applicationContext, REMINDER_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_launcher_foreground)
+                    .setContentTitle("⏱️ 使用时长提醒")
+                    .setContentText(message)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .setAutoCancel(true)
+                    .setTimeoutAfter(2000)
+                    .setOnlyAlertOnce(false)
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .setDefaults(0)
+                    .build()
+
+                // 显示通知
+                notificationManager.notify(REMINDER_NOTIFICATION_ID, notification)
+
+                // 2秒后自动取消通知
+                handler.postDelayed({
+                    notificationManager.cancel(REMINDER_NOTIFICATION_ID)
+                }, 2000)
+
+            } catch (e: Exception) {
+                android.util.Log.e("MonitorService", "通知显示失败: ${e.message}", e)
+            }
         }
-        startActivity(intent)
     }
 
     /**
