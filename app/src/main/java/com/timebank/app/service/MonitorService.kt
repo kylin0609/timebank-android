@@ -53,8 +53,9 @@ class MonitorService : Service() {
     private var negativeAppUsageSeconds: Long = 0
     private var lastNegativeApp: String? = null
 
-    // 负向应用上次提示时间（用于每分钟提示）
-    private var lastNegativeAppReminderTime: Long = 0
+    // 负向应用提醒记录（防止重复提醒）
+    private val reminderThresholds = setOf(60L, 180L, 300L, 480L) // 1分钟、3分钟、5分钟、8分钟
+    private val reminderShown = mutableSetOf<Long>() // 记录已显示的提醒时间点
 
     // 屏幕关闭标志
     private var wasScreenOff = false
@@ -202,9 +203,9 @@ class MonitorService : Service() {
         // 如果上次重置时间是昨天或更早，执行重置
         if (lastResetDate < todayStart) {
             android.util.Log.d("MonitorService", "检测到新的一天，执行每日重置")
-            configRepository.setCurrentBalance(60L) // 重置为默认的 1 分钟 (60秒)
+            configRepository.setCurrentBalance(300L) // 重置为默认的 5 分钟 (300秒)
             configRepository.setLastResetDate(currentTime)
-            android.util.Log.d("MonitorService", "每日重置完成，余额重置为 60 秒")
+            android.util.Log.d("MonitorService", "每日重置完成，余额重置为 300 秒")
         }
     }
 
@@ -257,7 +258,7 @@ class MonitorService : Service() {
                     if (currentApp != lastNegativeApp) {
                         lastNegativeApp = currentApp
                         negativeAppUsageSeconds = 0
-                        lastNegativeAppReminderTime = currentTime
+                        reminderShown.clear() // 清空已显示的提醒记录
                     }
 
                     if (currentBalance <= 0) {
@@ -306,8 +307,7 @@ class MonitorService : Service() {
                     configRepository.addBalance(earned)
                     android.util.Log.d("MonitorService", "正向应用 ${classification.appName} 使用 ${duration}秒，获得 ${earned}秒")
 
-                    // 更新通知
-                    updateNotification("使用正向应用，已获得 ${earned}秒")
+                    // 不再更新通知，只记录日志
                 }
 
                 AppCategory.NEGATIVE -> {
@@ -318,19 +318,44 @@ class MonitorService : Service() {
                     // 追踪负向应用使用时长
                     if (packageName == lastNegativeApp) {
                         negativeAppUsageSeconds += duration
-                        android.util.Log.d("MonitorService", "负向应用累计使用: ${negativeAppUsageSeconds}秒，距上次提示: ${currentTime - lastNegativeAppReminderTime}ms")
+                        android.util.Log.d("MonitorService", "负向应用累计使用: ${negativeAppUsageSeconds}秒")
 
-                        // 每5秒（5000毫秒）显示一次气泡提醒（测试用）
-                        if (currentTime - lastNegativeAppReminderTime >= 5000) {
+                        // 提醒策略：
+                        // 1. 1分钟（60秒）：提示一次
+                        // 2. 3分钟（180秒）：提示一次
+                        // 3. 5分钟（300秒）：提示一次
+                        // 4. 8分钟（480秒）：提示一次
+                        // 5. 8分钟后：每60秒（1分钟）提示一次
+
+                        var shouldRemind = false
+
+                        if (negativeAppUsageSeconds >= 480) {
+                            // 8分钟后：每分钟提示一次
+                            val currentMinute = negativeAppUsageSeconds / 60
+                            val lastMinute = (negativeAppUsageSeconds - duration) / 60
+                            if (currentMinute > lastMinute && currentMinute > 8) {
+                                shouldRemind = true
+                            }
+                        }
+
+                        // 检查是否达到特定时间点（1分钟、3分钟、5分钟、8分钟）
+                        for (threshold in reminderThresholds) {
+                            if (negativeAppUsageSeconds >= threshold && !reminderShown.contains(threshold)) {
+                                reminderShown.add(threshold)
+                                shouldRemind = true
+                                break
+                            }
+                        }
+
+                        if (shouldRemind) {
                             showBubbleReminder(negativeAppUsageSeconds)
-                            lastNegativeAppReminderTime = currentTime
                             android.util.Log.d("MonitorService", "已显示气泡提醒，累计使用: ${negativeAppUsageSeconds}秒")
                         }
                     } else {
                         // 切换到新的负向应用，重置计数器
                         lastNegativeApp = packageName
                         negativeAppUsageSeconds = duration
-                        lastNegativeAppReminderTime = currentTime
+                        reminderShown.clear()
                     }
 
                     if (currentBalance <= 0) {
@@ -347,14 +372,14 @@ class MonitorService : Service() {
                         // 重置负向应用计数器
                         negativeAppUsageSeconds = 0
                         lastNegativeApp = null
-                        lastNegativeAppReminderTime = 0
+                        reminderShown.clear()
                     } else {
                         // 尝试扣除余额
                         val success = configRepository.deductBalance(cost)
 
                         if (success) {
                             android.util.Log.d("MonitorService", "负向应用 ${classification.appName} 使用 ${duration}秒，扣除 ${cost}秒")
-                            updateNotification("使用负向应用，已扣除 ${cost}秒")
+                            // 不再更新通知，只记录日志
                         } else {
                             // 检查是否在冷却期内，避免重复弹窗
                             if (currentTime - lastBlockTime < BLOCK_COOLDOWN) {
@@ -369,7 +394,7 @@ class MonitorService : Service() {
                             // 重置负向应用计数器
                             negativeAppUsageSeconds = 0
                             lastNegativeApp = null
-                            lastNegativeAppReminderTime = 0
+                            reminderShown.clear()
                         }
                     }
                 }
@@ -382,23 +407,8 @@ class MonitorService : Service() {
     }
 
     /**
-     * 更新通知内容
-     */
-    private fun updateNotification(message: String) {
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("时间银行正在运行")
-            .setContentText(message)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setOngoing(true)
-            .build()
-
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.notify(NOTIFICATION_ID, notification)
-    }
-
-    /**
      * 显示气泡提醒
-     * 每5秒在负向应用上显示已使用时间（测试用）
+     * 按照使用时长阶段提醒：1分钟、3分钟、5分钟、8分钟，8分钟后每分钟提醒一次
      * 使用 Notification 实现，保证完全不阻挡触摸
      */
     private fun showBubbleReminder(usedSeconds: Long) {

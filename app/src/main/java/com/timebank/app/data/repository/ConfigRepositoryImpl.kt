@@ -36,7 +36,7 @@ class ConfigRepositoryImpl @Inject constructor(
 
     override fun getCurrentBalance(): Flow<Long> {
         return context.dataStore.data.map { prefs ->
-            prefs[PreferenceKeys.CURRENT_BALANCE] ?: 60L // 默认 1 分钟
+            prefs[PreferenceKeys.CURRENT_BALANCE] ?: 300L // 默认 5 分钟
         }
     }
 
